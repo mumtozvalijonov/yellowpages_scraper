@@ -22,7 +22,7 @@ class Scrape():
         driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
         driver.get('https://www.yellowpages.uz/')
         categories = driver.find_elements(By.CLASS_NAME, 'media-heading')
-        for category in categories[3:]:
+        for category in categories:
             excel_name = category.text
             cat_link = (category.find_element(By.TAG_NAME, 'a')).get_attribute('href')
             driver.execute_script(f"window.open('{cat_link}', 'new_window')")
