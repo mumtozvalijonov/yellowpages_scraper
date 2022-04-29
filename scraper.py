@@ -24,7 +24,7 @@ class Scrape():
         categories = driver.find_elements(By.CLASS_NAME, 'media-heading')
 
     
-        """новый excel файл с названием категории"""
+        """excel файл"""
         writer = pd.ExcelWriter('yellowpages.xlsx', engine='openpyxl')
     
     
@@ -32,7 +32,7 @@ class Scrape():
             cat_link = (category.find_element(By.TAG_NAME, 'a')).get_attribute('href')
             driver.execute_script(f"window.open('{cat_link}', 'new_window')")
 
-            """новый excel sheet с названием подкатегории"""
+            """новый excel sheet с названием категории"""
             sheet_name = category.text
             sheet_name = sheet_name.replace('/', '')
             sheet_name = sheet_name.replace('*', '')
@@ -92,13 +92,13 @@ class Scrape():
 
 
 """закрыть и переключиться на предыдушую страницу"""
-def close_window(driver, page):
+def close_window(driver, switch_to_page):
     driver.close()
     driver.switch_to.window(page)
     sleep(randint(1, 5))
 
 
-"""скрапер данных данных подкатегории"""
+
 def scrape_data(driver, page_of_subcategories, writer, sheet_name, sub_cat_name):
     organizations = driver.find_elements(By.CSS_SELECTOR, 'a.organizationName.blueText')
     for organization in organizations:
