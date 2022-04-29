@@ -94,7 +94,7 @@ class Scrape():
 """закрыть и переключиться на предыдушую страницу"""
 def close_window(driver, switch_to_page):
     driver.close()
-    driver.switch_to.window(page)
+    driver.switch_to.window(switch_to_page)
     sleep(randint(1, 5))
 
 
