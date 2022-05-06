@@ -7,6 +7,8 @@ from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -28,7 +30,7 @@ class Scrape():
         writer = pd.ExcelWriter('yellowpages.xlsx', engine='openpyxl')
     
     
-        for category in categories:
+        for category in categories[2:]:
             cat_link = (category.find_element(By.TAG_NAME, 'a')).get_attribute('href')
             driver.execute_script(f"window.open('{cat_link}', 'new_window')")
 
@@ -50,6 +52,10 @@ class Scrape():
 
             rubrics_categories = driver.find_element(By.CLASS_NAME, 'rubricsCategories')
             sub_cats = rubrics_categories.find_elements(By.CSS_SELECTOR, 'a.text-bold.darkText')
+            if sheet_name == 'Административные органы (65)':
+                sub_cats = sub_cats[36:]
+            else:
+                sub_cats = sub_cats    
             for sub_cat in sub_cats:
                 sub_cat_name = sub_cat.text
                 sub_cat_link = sub_cat.get_attribute('href')
@@ -108,7 +114,7 @@ def scrape_data(driver, page_of_subcategories, writer, sheet_name, sub_cat_name)
         driver.switch_to.window(parent)
         driver.get(link)
         sleep(randint(5, 15))
-        main_table = driver.find_element(By.CSS_SELECTOR, 'div.organizationPage')
+        main_table = WebDriverWait(driver, 10).until(EC.visibility_of_element_located((By.CSS_SELECTOR, 'div.organizationPage')))
         ps = main_table.find_elements(By.TAG_NAME, 'p')
         title = (driver.find_element(By.CSS_SELECTOR, 'h1.text25.mt20').text).replace(' - КОНТАКТЫ, АДРЕС, ТЕЛЕФОН', '')
         phone_number = (driver.find_element(By.CSS_SELECTOR, 'p.text16.lh23').text).replace(' ', '')
