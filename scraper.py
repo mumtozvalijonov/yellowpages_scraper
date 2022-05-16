@@ -1,7 +1,9 @@
-import os
-
+from abc import ABC, abstractmethod
+from concurrent.futures import ProcessPoolExecutor
 from time import sleep
 from random import randint
+
+from pathlib import Path
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
@@ -13,108 +15,139 @@ from webdriver_manager.chrome import ChromeDriverManager
 import pandas as pd
 
 
-class Scrape():
-    def scrape_web_site(self):
+SAVE_PATH = Path(__file__).parent / 'scraped/'
+
+
+class AbstractScraper(ABC):
+
+    @abstractmethod
+    def __enter__(self):
+        pass
+
+    @abstractmethod
+    def __exit__(self, *exc_info):
+        pass
+
+    """закрыть и переключиться на предыдушую страницу"""
+    def switch_to_page(self, page, close=True):
+        if close:
+            self.driver.close()
+        self.driver.switch_to.window(page)
+        sleep(randint(1, 3))
+
+
+class CategoryScraper(AbstractScraper):
+
+    def __init__(self, name, link) -> None:
+        self.name = name
+        self.link = link
+
+    @staticmethod
+    def get_save_path(cat_name):
+        return SAVE_PATH / f'{cat_name}.xlsx'
+
+    def __enter__(self):
         options = Options()
         options.add_argument('--headless')
         options.add_argument('--no-sandbox')
         options.add_argument('--disable-dev-shm-usage')
-        driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
-        driver.get('https://www.yellowpages.uz/')
-        categories = driver.find_elements(By.CLASS_NAME, 'media-heading')
-        for category in categories:
-            excel_name = category.text
-            cat_link = (category.find_element(By.TAG_NAME, 'a')).get_attribute('href')
-            driver.execute_script(f"window.open('{cat_link}', 'new_window')")
+        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
 
-            """новый excel файл с названием категории"""
-            writer = pd.ExcelWriter(f'{excel_name}.xlsx', engine='openpyxl')
+        save_path = self.get_save_path(self.name)
+        self.writer = pd.ExcelWriter(str(save_path), engine='openpyxl')
+        return self
+    
+    def __exit__(self, *exc_info):
+        self.writer.close()
+        self.driver.quit()
 
-            main_page = driver.window_handles[0]
-            sub_main_page = driver.window_handles[1]
-            driver.switch_to.window(sub_main_page)
-            sleep(randint(1, 5))
+    def run(self):
+        self.driver.get(self.link)
 
-
-            rubrics_categories = driver.find_element(By.CLASS_NAME, 'rubricsCategories')
-            sub_cats = rubrics_categories.find_elements(By.CSS_SELECTOR, 'a.text-bold.darkText')
-            for sub_cat in sub_cats:
-                """новый excel sheet с названием подкатегории"""
-                sheet_name = sub_cat.text
-                sheet_name = sheet_name.replace('/', '')
-                sheet_name = sheet_name.replace('*', '')
-                sheet_name = sheet_name.replace('?', '')
-                sheet_name = sheet_name.replace(':', '')
-                sheet_name = sheet_name.replace('[', '')
-                sheet_name = sheet_name.replace(']', '')
+        sub_main_page = self.driver.window_handles[0]
+        rubrics_categories = self.driver.find_element(By.CLASS_NAME, 'rubricsCategories')
+        sub_cats = rubrics_categories.find_elements(By.CSS_SELECTOR, 'a.text-bold.darkText')
+        for sub_cat in sub_cats:
+            """новый excel sheet с названием подкатегории"""
+            sheet_name = sub_cat.text
+            sheet_name = sheet_name.replace('/', '')
+            sheet_name = sheet_name.replace('*', '')
+            sheet_name = sheet_name.replace('?', '')
+            sheet_name = sheet_name.replace(':', '')
+            sheet_name = sheet_name.replace('[', '')
+            sheet_name = sheet_name.replace(']', '')
 
 
-                sub_cat_link = sub_cat.get_attribute('href')
-                driver.execute_script("window.open('');")
-                page_of_subcategories = driver.window_handles[2]
-                driver.switch_to.window(page_of_subcategories)
-                driver.get(f"{sub_cat_link}?pagenumber=1&pagesize=100")
-                sleep(randint(5, 15))
+            sub_cat_link = sub_cat.get_attribute('href')
+            self.driver.execute_script("window.open('');")
+            page_of_subcategories = self.driver.window_handles[1]
+            self.driver.switch_to.window(page_of_subcategories)
+            self.driver.get(f"{sub_cat_link}?pagenumber=1&pagesize=100")
+            sleep(randint(1, 3))
 
-                """пагинация"""
-                page = 1
-                while True:
-                    try:
-                        pagination = driver.find_element(By.CSS_SELECTOR, 'ul.pagination')
-                    except:
-                        pagination = None   
+            """пагинация"""
+            page = 1
+            while True:
+                try:
+                    pagination = self.driver.find_element(By.CSS_SELECTOR, 'ul.pagination')
+                except:
+                    pagination = None   
 
-                    if pagination is None:
+                if pagination is None:
+                    break
+                elif pagination and pagination.text != '':
+                    self.scrape_subcategory(page_of_subcategories, sheet_name)
+                    page += 1 
+                    pagination = self.driver.find_element(By.CSS_SELECTOR, 'ul.pagination')
+                    last_page = int(pagination.find_elements(By.TAG_NAME, 'li')[-1].text)
+                    if page < last_page:
+                        self.driver.get(f"{sub_cat_link}?pagenumber={page}&pagesize=100")
+                        self.driver.switch_to.window(page_of_subcategories)
+                        continue
+                    elif page == last_page:
+                        self.driver.get(f"{sub_cat_link}?pagenumber={page}&pagesize=100")
+                        self.scrape_subcategory(page_of_subcategories, sheet_name)
                         break
-                    elif pagination and pagination.text != '':
-                        scrape_data(driver, page_of_subcategories, writer, excel_name, sheet_name)
-                        page += 1 
-                        pagination = driver.find_element(By.CSS_SELECTOR, 'ul.pagination')
-                        last_page = int(pagination.find_elements(By.TAG_NAME, 'li')[-1].text)
-                        if page < last_page:
-                            driver.get(f"{sub_cat_link}?pagenumber={page}&pagesize=100")
-                            driver.switch_to.window(page_of_subcategories)
-                            continue
-                        elif page == last_page:
-                            driver.get(f"{sub_cat_link}?pagenumber={page}&pagesize=100")
-                            scrape_data(driver, page_of_subcategories, writer, excel_name, sheet_name)
-                            break
-                    elif pagination.text == '':
-                        scrape_data(driver, page_of_subcategories, writer, excel_name, sheet_name)
-                        break  
-                close_window(driver, sub_main_page)  
-            writer.close()      
-            close_window(driver, main_page)            
-        driver.quit() 
+                elif pagination.text == '':
+                    self.scrape_subcategory(page_of_subcategories, sheet_name)
+                    break  
+            self.switch_to_page(sub_main_page)
 
-
-"""закрыть и переключиться на предыдушую страницу"""
-def close_window(driver, page):
-    driver.close()
-    driver.switch_to.window(page)
-    sleep(randint(1, 5))
-
-
-"""скрапер данных данных подкатегории"""
-def scrape_data(driver, page_of_subcategories, writer, excel_name, sheet_name):
-    organizations = driver.find_elements(By.CSS_SELECTOR, 'a.organizationName.blueText')
-    for organization in organizations:
+    """скрапер данных подкатегории"""
+    def scrape_subcategory(self, page_of_subcategories, sheet_name):
+        organizations = self.driver.find_elements(By.CSS_SELECTOR, 'a.organizationName.blueText')
+        subcategory_data = []
+        for organization in organizations:
+            try:
+                data = self.scrape_organization(organization)
+            except:
+                continue
+            subcategory_data.append(data)
+            self.switch_to_page(page_of_subcategories)
+        df = pd.DataFrame(subcategory_data)
+        try:
+            df.to_excel(self.writer, sheet_name=f"{sheet_name}")
+        except:
+            return
+        else:
+            self.writer.save()
+    
+    def scrape_organization(self, organization):
         link = organization.get_attribute('href')
-        driver.execute_script("window.open('');")
-        parent = driver.window_handles[3]
-        driver.switch_to.window(parent)
-        driver.get(link)
-        sleep(randint(5, 15))
-        main_table = driver.find_element(By.CSS_SELECTOR, 'div.organizationPage')
+        self.driver.execute_script("window.open('');")
+        parent = self.driver.window_handles[3]
+        self.driver.switch_to.window(parent)
+        self.driver.get(link)
+        sleep(randint(1, 3))
+        main_table = self.driver.find_element(By.CSS_SELECTOR, 'div.organizationPage')
         ps = main_table.find_elements(By.TAG_NAME, 'p')
-        title = (driver.find_element(By.CSS_SELECTOR, 'h1.text25.mt20').text).replace(' - КОНТАКТЫ, АДРЕС, ТЕЛЕФОН', '')
-        phone_number = (driver.find_element(By.CSS_SELECTOR, 'p.text16.lh23').text).replace(' ', '')
+        title = (self.driver.find_element(By.CSS_SELECTOR, 'h1.text25.mt20').text).replace(' - КОНТАКТЫ, АДРЕС, ТЕЛЕФОН', '')
+        phone_number = (self.driver.find_element(By.CSS_SELECTOR, 'p.text16.lh23').text).replace(' ', '')
         email = ''
         web_site = ''
         legal_name = ''
-        brand_anme = ''
         office_hours = ''
-        address = (driver.find_element(By.CSS_SELECTOR, 'p.address').text).replace('Адрес: ', '')
+        address = (self.driver.find_element(By.CSS_SELECTOR, 'p.address').text).replace('Адрес: ', '')
 
         for p in ps:
             try:
@@ -151,28 +184,46 @@ def scrape_data(driver, page_of_subcategories, writer, excel_name, sheet_name):
             elif brand_name_ref and brand_name_ref.text in p.text:
                 brand_name = (p.text).replace('Брендовое название: ', '')
             elif office_hours_ref and office_hours_ref.text in p.text:
-                office_hours = (p.text).replace('Часы работы: ', '')                  
+                office_hours = (p.text).replace('Часы работы: ', '')
 
-        df = pd.DataFrame([{'Организация': title, 'Юридическое название': legal_name, 'Брендовое название': brand_name, 'Контактные номера': phone_number, 'e-mail': email, 'Веб-страница': web_site, 'Адрес': address, "Режим работы": office_hours}], index=pd.RangeIndex(start=1, name='index'))
-        if os.path.getsize(f"{excel_name}.xlsx") == 0 or sheet_name not in writer.sheets:
-            df.to_excel(writer, sheet_name=f"{sheet_name}")
-        else: 
-            df.to_excel(writer, header=False, index=True, startrow=writer.sheets[f"{sheet_name}"].max_row, sheet_name=f"{sheet_name}")
-        ws = writer.sheets[sheet_name]
-        dims = {}
-        for row in ws.rows:
-            for cell in row:
-                if cell.value:
-                    dims[cell.column_letter] = max((dims.get(cell.column_letter, 0), len(str(cell.value))))    
-        for col, value in dims.items():
-            ws.column_dimensions[col].width = value
-        writer.save()
-        close_window(driver, page_of_subcategories)
-             
+        return {'Организация': title, 'Юридическое название': legal_name, 'Брендовое название': brand_name, 'Контактные номера': phone_number, 'e-mail': email, 'Веб-страница': web_site, 'Адрес': address, "Режим работы": office_hours}
 
-data = Scrape()
 
+
+class Scraper(AbstractScraper):
+    
+    def __init__(self) -> None:
+        self.executor = ProcessPoolExecutor(max_workers=5)
+
+    def __enter__(self):
+        options = Options()
+        options.add_argument('--headless')
+        options.add_argument('--no-sandbox')
+        options.add_argument('--disable-dev-shm-usage')
+        self.driver = webdriver.Chrome(service=Service(ChromeDriverManager().install()), options=options)
+        return self
+
+    def __exit__(self, *exc_info):
+        self.executor.shutdown()
+        self.driver.quit()
+    
+    def run(self):
+        self.driver.get('https://www.yellowpages.uz/')
+        categories = self.driver.find_elements(By.CLASS_NAME, 'media-heading')
+        print(f"Found total {len(categories)} categories")
+        for category in categories:
+            if not CategoryScraper.get_save_path(category.text).exists():
+                self.scrape_category(category)
+        self.driver.quit() 
+
+    def scrape_category(self, category):
+        print(f"Starting category: {category.text}")
+        excel_name = category.text
+        cat_link = (category.find_element(By.TAG_NAME, 'a')).get_attribute('href')
+        with CategoryScraper(excel_name, cat_link) as category_scraper:
+            category_scraper.run()
 
 
 if __name__ == "__main__":
-    data.scrape_web_site()
+    with Scraper() as scraper:
+        scraper.run()
